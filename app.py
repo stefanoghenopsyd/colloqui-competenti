@@ -2,282 +2,199 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+from math import pi
+from datetime import datetime
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from datetime import datetime
-import uuid
 
-# --- 1. CONFIGURAZIONE E COSTANTI ---
+# --- 1. CONFIGURAZIONE PAGINA E COSTANTI ---
 st.set_page_config(page_title="Autovalutazione Colloquio", page_icon="📝")
 
-# COLORI DEL BRAND (MODIFICA QUESTI CODICI HEX PER I COLORI DI GENERA)
-COLOR_PRIMARY = "#1f77b4"  # Colore principale (es. Blu)
-COLOR_SECONDARY = "#ff7f0e" # Colore secondario (es. Arancione)
-COLOR_ACCENT = "#2ca02c"   # Colore accento (es. Verde)
-
-# DOMANDE E AREE
-DOMANDE = {
-    "Ascolto Attivo": [
-        "Complessivamente come valuti la tua capacità di ascolto? (Non solo parole, ma segnali non verbali)",
-        "Quanto ti ritieni in grado di approfondire ciò che hai appena sentito facendo domande?",
-        "Quando l'interlocutore fa una pausa, quanto sei in grado di resistere all'impulso di interromperlo?"
-    ],
-    "Empatia e Gestione Emozioni": [
-        "Quanto ti ritieni in grado di creare un ambiente rilassato che metta l'interlocutore a proprio agio?",
-        "Quanto ti ritieni in grado di gestire le tue emozioni rimanendo calmo anche in tensione?",
-        "Quanto riesci a percepire lo stato d'animo dell'interlocutore e modificare il tuo approccio?"
-    ],
-    "Competenze Informative (Domande)": [
-        "Quanto sai strutturare le domande per far emergere esempi concreti (comportamenti/competenze)?",
-        "Quanto sei in grado di formulare domande che valutino le 'soft skills'?",
-        "Quanto riesci ad evitare domande da 'sì/no' formulando domande che richiedono risposte elaborate?"
-    ],
-    "Competenze di Equità (Obiettività)": [
-        "Quanto sei consapevole dei tuoi pregiudizi e cerchi di non farti influenzare?",
-        "Quanto sei capace di basarti su fatti e dati concreti anziché su impressioni o simpatia?",
-        "Quanto ti ritieni in grado di applicare lo stesso metro di giudizio a tutti?"
-    ]
+# Colori personalizzati (Modifica questi codici HEX per adattarli esattamente al tuo Logo)
+COLORS = {
+    "Area 1": "#2E7D32",  # Verde (Ascolto)
+    "Area 2": "#1565C0",  # Blu (Empatia)
+    "Area 3": "#EF6C00",  # Arancione (Domande)
+    "Area 4": "#7B1FA2"   # Viola (Obiettività)
 }
 
-# FEEDBACK TESTUALE
-FEEDBACK_INFO = {
-    "Ascolto Attivo": {
-        "title": "🟢 Se devi potenziare l'Ascolto Attivo:",
-        "goal": "Obiettivo: Passare dal semplice 'sentire' all'ascolto generativo.",
-        "actions": [
-            "**Azione 1 (Non verbale):** Osserva il linguaggio del corpo. I segnali corrispondono alle parole?",
-            "**Azione 2 (Restituzione):** Riassumi con parole tue ciò che l'altro ha detto per verificare la comprensione.",
-            "**Azione 3 (Apertura):** Usa domande come 'Mi puoi raccontare di più su...?' per incoraggiare la narrazione."
-        ]
-    },
-    "Empatia e Gestione Emozioni": {
-        "title": "🔵 Se devi potenziare l'Empatia:",
-        "goal": "Obiettivo: Sintonizzarsi sulla lunghezza d'onda dell'altro per ridurre le difese.",
-        "actions": [
-            "**Azione 1 (Immedesimazione):** Prima del colloquio, rifletti sulle possibili ansie dell'interlocutore.",
-            "**Azione 2 (Postura):** Mantieni un linguaggio del corpo accogliente (non incrociare le braccia).",
-            "**Azione 3 (Mindfulness):** Gestisci la tua ansia con la respirazione."
-        ]
-    },
-    "Competenze Informative (Domande)": {
-        "title": "🟠 Se devi potenziare la Formulazione delle Domande:",
-        "goal": "Obiettivo: Raccogliere informazioni utili, non solo conferme.",
-        "actions": [
-            "**Azione 1 (Tecnica STAR):** Chiedi Situazione, Task, Azione, Risultato per avere esempi concreti.",
-            "**Azione 2 (Specificità):** Prepara le domande in anticipo focalizzandole su comportamenti passati.",
-            "**Azione 3 (Simulazione):** Fai pratica con colleghi (colloqui fittizi)."
-        ]
-    },
-    "Competenze di Equità (Obiettività)": {
-        "title": "🟣 Se devi potenziare l'Obiettività:",
-        "goal": "Obiettivo: Basare la valutazione sui fatti, riducendo i bias cognitivi.",
-        "actions": [
-            "**Azione 1 (Struttura):** Usa una griglia di valutazione strutturata per basarti su criteri oggettivi.",
-            "**Azione 2 (Focus sui dati):** Valuta la qualità della risposta, non l'emozione di chi risponde.",
-            "**Azione 3 (Consapevolezza):** Attento all'effetto alone e al bias di conferma."
-        ]
-    }
-}
+# Opzioni Demografiche
+GENERE_OPTS = ["Maschile", "Femminile", "Non binario", "Non risponde"]
+ETA_OPTS = ["Fino a 20 anni", "21-30 anni", "31-40 anni", "41-50 anni", "51-60 anni", "61-70 anni", "Più di 70 anni"]
+STUDIO_OPTS = ["Licenza media", "Qualifica professionale", "Diploma di maturità", "Laurea triennale", "Laurea magistrale (o ciclo unico)", "Titolo post lauream"]
+JOB_OPTS = ["Imprenditore", "Top manager", "Middle manager", "Impiegato", "Operaio", "Tirocinante", "Libero professionista"]
 
-# --- 2. FUNZIONI DI SUPPORTO ---
+# --- 2. FUNZIONI DI UTILITÀ ---
 
-def save_to_google_sheet(data_dict):
-    """Salva i dati su Google Sheet. Ritorna True se successo, False se errore."""
+def salva_su_google_sheet(dati):
+    """
+    Tenta di salvare i dati su Google Sheets. 
+    Restituisce True se successo, False se fallisce (ma non blocca l'app).
+    """
     try:
-        # Recupera le credenziali dai Secrets di Streamlit
+        # Recupera i segreti da Streamlit Cloud
         scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
         creds_dict = st.secrets["gcp_service_account"]
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
         
-        # Apre il foglio (sostituisci con il nome esatto del tuo foglio se diverso)
-        sheet = client.open("Dati Autovalutazione GENERA").sheet1
-        
-        # Prepara la riga
-        row = [
-            data_dict["identificativo"],
-            data_dict["genere"],
-            data_dict["eta"],
-            data_dict["titolo_studio"],
-            data_dict["job"]
-        ]
-        # Aggiunge i punteggi
-        for area in DOMANDE:
-            for i in range(len(DOMANDE[area])):
-                key = f"{area}_{i}"
-                row.append(data_dict.get(key, 0))
-                
-        sheet.append_row(row)
+        # Apre il foglio (assicurati di averlo condiviso con la mail del service account)
+        sheet = client.open("DB_Autovalutazione_Colloquio").sheet1
+        sheet.append_row(dati)
         return True
     except Exception as e:
-        st.error(f"⚠️ Impossibile salvare i dati nel cloud (Errore: {e}). Il feedback verrà comunque mostrato.")
+        st.error(f"⚠️ Nota tecnica: Impossibile salvare nel database remoto ({e}). I tuoi risultati vengono comunque mostrati qui sotto.")
         return False
 
-def create_radar_chart(scores):
-    """Crea un grafico radar con i punteggi medi per area."""
-    labels = list(scores.keys())
-    # Normalizza i punteggi su base 10 per il grafico (dato che il max per area è 18)
-    # Oppure usiamo il valore assoluto. Max score per area = 3 domande * 6 punti = 18.
-    values = list(scores.values())
+def crea_radar_chart(punteggi_aree):
+    """Crea un grafico radar con i colori specifici."""
+    categories = list(punteggi_aree.keys())
+    N = len(categories)
     
-    # Chiudi il cerchio del grafico
+    # I valori devono essere "chiusi" (il primo valore ripetuto alla fine)
+    values = list(punteggi_aree.values())
     values += values[:1]
-    angles = np.linspace(0, 2*np.pi, len(labels), endpoint=False).tolist()
+    
+    angles = [n / float(N) * 2 * pi for n in range(N)]
     angles += angles[:1]
     
     fig, ax = plt.subplots(figsize=(6, 6), subplot_kw=dict(polar=True))
-    ax.fill(angles, values, color=COLOR_PRIMARY, alpha=0.25)
-    ax.plot(angles, values, color=COLOR_PRIMARY, linewidth=2)
     
-    ax.set_yticklabels([])
-    ax.set_xticks(angles[:-1])
-    ax.set_xticklabels(labels, fontsize=10)
+    # Disegna assi e label
+    plt.xticks(angles[:-1], categories, color='grey', size=10)
+    ax.set_rlabel_position(0)
+    plt.yticks([1, 2, 3, 4, 5, 6], ["1", "2", "3", "4", "5", "6"], color="grey", size=7)
+    plt.ylim(0, 6)
     
-    # Scala massima fissa a 18
-    ax.set_ylim(0, 18)
+    # Plot dati
+    ax.plot(angles, values, linewidth=2, linestyle='solid', color='#d62728')
+    ax.fill(angles, values, 'r', alpha=0.1)
     
     return fig
 
 # --- 3. INTERFACCIA UTENTE (MAIN) ---
 
 def main():
-    # CSS per Footer e Logo responsivo
+    # HEADER RESPONSIVE
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        # Inserisci il file 'GENERA Logo Colore.png' nella cartella del progetto
+        try:
+            st.image("GENERA Logo Colore.png", use_container_width=True)
+        except:
+            st.warning("Immagine 'GENERA Logo Colore.png' non trovata. Caricala nella repository.")
+    
+    st.title("Autovalutazione Competenza Colloquio")
+    st.markdown("---")
+
+    # INTRODUZIONE
     st.markdown("""
-        <style>
-        .footer {position: fixed; left: 0; bottom: 0; width: 100%; background-color: #f1f1f1; color: #555; text-align: center; padding: 10px; font-size: 12px;}
-        [data-testid="stImage"] {display: block; margin-left: auto; margin-right: auto;}
-        </style>
-        """, unsafe_allow_html=True)
+    **Benvenuto/a.**
+    
+    Spesso pensiamo all'organizzazione come a una macchina, ma in realtà essa è una comunità di persone, una "macchina con l'anima". In questo contesto, il colloquio non è un semplice interrogatorio o una procedura burocratica, ma lo strumento principe per la **cura della relazione**.
 
-    # --- HEADER ---
-    try:
-        st.image("GENERA Logo Colore.png", use_container_width=True)
-    except:
-        st.warning("Immagine 'GENERA Logo Colore.png' non trovata. Caricala nella repository.")
+    Il colloquio è un momento di scambio in cui si incontrano non solo informazioni, ma persone. Non è mai neutro: è un evento relazionale dove elementi cognitivi ed emotivi si intrecciano. L'obiettivo non è solo scambiare dati (A dà a B), ma **generare nuove informazioni** e nuove possibilità di crescita per entrambi gli interlocutori.
 
-    st.title("Autovalutazione della competenza nel condurre un colloquio")
+    Questa App ti aiuta a valutare il tuo "potere personale" nella conduzione del colloquio, analizzando le tue competenze attuali per trasformarle in risorse generative.
+    """)
+    
+    st.info("👉 **INIZIA L'AUTOVALUTAZIONE**")
+    st.caption("Proseguendo nella compilazione acconsento a che i dati raccolti potranno essere utilizzati in forma aggregata esclusivamente per finalità statistiche.")
 
-    # --- INTRODUZIONE ---
-    if 'submitted' not in st.session_state:
-        st.markdown("""
-        ### Benvenuto/a.
+    # FORM DI INPUT
+    with st.form("assessment_form"):
+        st.subheader("1. I tuoi Dati")
         
-        Spesso pensiamo all'organizzazione come a una macchina, ma in realtà essa è una comunità di persone, una **"macchina con l'anima"**. In questo contesto, il colloquio non è un semplice interrogatorio o una procedura burocratica, ma lo strumento principe per la **cura della relazione**.
+        col_anag1, col_anag2 = st.columns(2)
+        with col_anag1:
+            nome = st.text_input("Nome o Nickname (Identificativo)")
+            genere = st.selectbox("Genere", GENERE_OPTS)
+            eta = st.selectbox("Età", ETA_OPTS)
+        with col_anag2:
+            titolo = st.selectbox("Titolo di studio", STUDIO_OPTS)
+            job = st.selectbox("Job / Ruolo", JOB_OPTS)
 
-        Il colloquio è un momento di scambio in cui si incontrano non solo informazioni, ma persone. Non è mai neutro: è un evento relazionale dove elementi cognitivi ed emotivi si intrecciano. L'obiettivo non è solo scambiare dati, ma **generare nuove informazioni** e nuove possibilità di crescita.
-
-        Questa App ti aiuta a valutare il tuo "potere personale" nella conduzione del colloquio.
-        """)
-        
-        st.info("Proseguendo nella compilazione acconsento a che i dati raccolti potranno essere utilizzati in forma aggregata esclusivamente per finalità statistiche.")
-        
-        if st.button("👉 INIZIA L'AUTOVALUTAZIONE"):
-            st.session_state['started'] = True
-            st.rerun()
-
-    # --- QUESTIONARIO E DATI ---
-    elif 'started' in st.session_state and 'submitted' not in st.session_state:
-        
-        with st.form("assessment_form"):
-            st.markdown("### Informazioni Generali")
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                nome = st.text_input("Nome o Nickname")
-                eta = st.selectbox("Età", ["fino a 20 anni", "21-30 anni", "31-40 anni", "41-50 anni", "51-60 anni", "61-70 anni", "più di 70 anni"])
-                titolo = st.selectbox("Titolo di studio", ["licenza media", "qualifica professionale", "diploma di maturità", "laurea triennale", "laurea magistrale (o ciclo unico)", "titolo post lauream"])
-            
-            with col2:
-                genere = st.selectbox("Genere", ["Maschile", "Femminile", "Non binario", "Non risponde"])
-                job = st.selectbox("Job", ["imprenditore", "top manager", "middle manager", "impiegato", "operaio", "tirocinante", "libero professionista"])
-            
-            st.markdown("---")
-            st.markdown("### Questionario")
-            st.caption("Valuta la tua abilità su una scala da 1 (Pessima) a 6 (Ottima).")
-
-            responses = {}
-            
-            # Generazione dinamica delle domande
-            for area, questions in DOMANDE.items():
-                st.subheader(area)
-                for idx, q in enumerate(questions):
-                    key = f"{area}_{idx}"
-                    # Scala Likert a 6 punti (1-6)
-                    responses[key] = st.slider(q, min_value=1, max_value=6, value=3, key=key)
-                st.markdown(" ")
-
-            submitted = st.form_submit_button("Calcola il mio Profilo")
-            
-            if submitted:
-                if not nome:
-                    st.error("Per favore inserisci un nome o nickname.")
-                else:
-                    # Calcolo Punteggi
-                    scores_by_area = {}
-                    total_score = 0
-                    
-                    for area in DOMANDE:
-                        area_total = 0
-                        for i in range(len(DOMANDE[area])):
-                            area_total += responses[f"{area}_{i}"]
-                        scores_by_area[area] = area_total
-                        total_score += area_total
-                    
-                    # Preparazione dati per salvataggio
-                    user_data = {
-                        "identificativo": f"{datetime.now().strftime('%Y%m%d%H%M')}_{str(uuid.uuid4())[:4]}",
-                        "genere": genere,
-                        "eta": eta,
-                        "titolo_studio": titolo,
-                        "job": job,
-                        **responses # Unisce le risposte singole
-                    }
-                    
-                    # Salvataggio
-                    save_success = save_to_google_sheet(user_data)
-                    
-                    # Salvataggio in session state per visualizzare i risultati
-                    st.session_state['submitted'] = True
-                    st.session_state['scores'] = scores_by_area
-                    st.session_state['total'] = total_score
-                    st.rerun()
-
-    # --- RISULTATI ---
-    elif 'submitted' in st.session_state:
-        scores = st.session_state['scores']
-        
-        st.markdown("## 📊 Il Tuo Profilo di Potere")
-        st.write(f"**Punteggio Totale:** {st.session_state['total']} / 72")
-        
-        # Grafico Radar
-        fig = create_radar_chart(scores)
-        st.pyplot(fig)
-        
         st.markdown("---")
-        st.markdown("### Aree di Miglioramento")
-        st.write("Di seguito le aree dove puoi aprire nuove possibilità (punteggio < 11 su 18):")
-        
-        areas_to_improve = False
-        for area, score in scores.items():
-            # Soglia: 18 è il max. 11 è circa il 60%.
-            if score < 11:
-                areas_to_improve = True
-                content = FEEDBACK_INFO[area]
-                with st.expander(f"{content['title']} (Punteggio: {score}/18)", expanded=True):
-                    st.markdown(f"_{content['goal']}_")
-                    for action in content['actions']:
-                        st.markdown(f"- {action}")
-        
-        if not areas_to_improve:
-            st.success("Complimenti! Hai ottenuto punteggi alti in tutte le aree. Continua a coltivare queste competenze.")
+        st.subheader("2. Misura le tue Risorse")
+        st.markdown("*Istruzioni: Valuta la tua abilità su una scala da 1 (Pessima/Per niente) a 6 (Ottima/Molto).*")
 
-        if st.button("Ricomincia"):
-            for key in list(st.session_state.keys()):
-                del st.session_state[key]
-            st.rerun()
+        # --- AREA 1 ---
+        st.markdown(f"#### <span style='color:{COLORS['Area 1']}'>AREA 1: Ascolto Attivo</span>", unsafe_allow_html=True)
+        q1 = st.slider("1. Complessivamente come valuti la tua capacità di ascolto? (Segnali verbali e non verbali)", 1, 6, 3)
+        q2 = st.slider("2. Quanto ti ritieni in grado di approfondire ciò che hai appena sentito facendo domande?", 1, 6, 3)
+        q3 = st.slider("3. Quanto sei in grado di resistere all'impulso di interrompere?", 1, 6, 3)
 
-    # --- FOOTER ---
-    st.markdown('<div class="footer">Powered by GÉNERA</div>', unsafe_allow_html=True)
+        # --- AREA 2 ---
+        st.markdown(f"#### <span style='color:{COLORS['Area 2']}'>AREA 2: Empatia e Gestione delle Emozioni</span>", unsafe_allow_html=True)
+        q4 = st.slider("4. Quanto ti ritieni in grado di creare un ambiente rilassato?", 1, 6, 3)
+        q5 = st.slider("5. Quanto ti ritieni in grado di gestire le tue emozioni rimanendo calmo?", 1, 6, 3)
+        q6 = st.slider("6. Quanto riesci a percepire lo stato d'animo dell'interlocutore?", 1, 6, 3)
 
-if __name__ == "__main__":
-    main()
+        # --- AREA 3 ---
+        st.markdown(f"#### <span style='color:{COLORS['Area 3']}'>AREA 3: Competenze Informative (Domande)</span>", unsafe_allow_html=True)
+        q7 = st.slider("7. Quanto sai strutturare le domande per far emergere esempi concreti?", 1, 6, 3)
+        q8 = st.slider("8. Quanto sei in grado di formulare domande che valutino le 'soft skills'?", 1, 6, 3)
+        q9 = st.slider("9. Quanto riesci ad evitare domande da 'sì/no'?", 1, 6, 3)
+
+        # --- AREA 4 ---
+        st.markdown(f"#### <span style='color:{COLORS['Area 4']}'>AREA 4: Competenze di Equità (Obiettività)</span>", unsafe_allow_html=True)
+        q10 = st.slider("10. Quanto sei consapevole dei tuoi possibili pregiudizi?", 1, 6, 3)
+        q11 = st.slider("11. Quanto sei capace di basarti su fatti e dati concreti?", 1, 6, 3)
+        q12 = st.slider("12. Quanto ti ritieni in grado di applicare lo stesso metro di giudizio a tutti?", 1, 6, 3)
+
+        submitted = st.form_submit_button("Calcola Profilo")
+
+    # LOGICA POST-SUBMIT
+    if submitted:
+        if not nome:
+            st.error("Per favore inserisci un Nome o Nickname per procedere.")
+        else:
+            # Calcoli
+            score_a1 = (q1 + q2 + q3) / 3
+            score_a2 = (q4 + q5 + q6) / 3
+            score_a3 = (q7 + q8 + q9) / 3
+            score_a4 = (q10 + q11 + q12) / 3
+            total_score = q1+q2+q3+q4+q5+q6+q7+q8+q9+q10+q11+q12
+            
+            punteggi = {
+                "Ascolto Attivo": score_a1,
+                "Empatia": score_a2,
+                "Domande": score_a3,
+                "Obiettività": score_a4
+            }
+
+            # 1. SALVATAGGIO DATI (Drive)
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            record = [
+                timestamp, nome, genere, eta, titolo, job,
+                q1, q2, q3, q4, q5, q6, q7, q8, q9, q10, q11, q12,
+                total_score
+            ]
+            salva_su_google_sheet(record)
+
+            # 2. VISUALIZZAZIONE RISULTATI
+            st.markdown("---")
+            st.header("3. RESULTS SCREEN: Il Tuo Profilo di Potere")
+            st.write(f"**Il tuo punteggio totale:** {total_score} / 72")
+
+            # Grafico Radar
+            col_chart, col_desc = st.columns([1, 1])
+            with col_chart:
+                fig = crea_radar_chart(punteggi)
+                st.pyplot(fig)
+            
+            with col_desc:
+                st.write("Questo grafico mostra il bilanciamento delle tue competenze. Più l'area colorata è ampia e regolare, più il tuo profilo è solido.")
+
+            st.markdown("### Aree di Miglioramento")
+            
+            # Feedback Condizionali (Soglia impostata a < 5 su scala 6 per triggerare consigli, adattabile)
+            # Il testo originale diceva "< 9" ma era su somma di 3 item scala 5 (max 15). 
+            # Qui abbiamo somma 3 item scala 6 (max 18). 9/15 è il 60%. Il 60% di 18 è 10.8.
+            # Userò la media: se media < 4 (su 6) mostra il consiglio.
+            
+            if score_a1 < 4:
+                st.markdown(f"""
+                #### 🟢 **Potenziare l'Ascolto Attivo**
+                *Obiettivo: Passare dal semplice "sentire" all'ascolto generativo.*
+                * **Azione 1 (Non verbale):** Oss
